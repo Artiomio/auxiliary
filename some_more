@@ -1,0 +1,25 @@
+def img_from_folder_generator(folder, infinite=False):
+    file_list = sorted(glob.glob(folder, recursive=True))
+    while True:
+        for file_name in file_list:
+            yield io.imread(file_name) 
+        if not infinite: break
+            
+def get_random_image_from_folder(folder):
+    file_list = glob.glob(folder + "/*", recursive=True)
+    img = io.imread(np.random.choice(file_list))
+    return img
+
+def crop_nonzero(img):
+    Y, X = np.nonzero(mask_img[:, :, 0])
+    y1, y2, x1, x2 = Y.min(), Y.max(), X.min(), X.max()
+    return img[y1: y2, x1: x2]
+
+def get_random_img():
+    return get_random_image_from_folder("/home/art/ArtTrack/bcstats/shots/") & mask_img
+
+
+def get_frame_from_url_generator(url):
+    while True:
+        frame = io.imread(url)
+        yield frame
