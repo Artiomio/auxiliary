@@ -1,7 +1,6 @@
 import sys, os, glob
 import random
 import time
-
 imports = """
 import cv2
 import numpy as np
@@ -10,16 +9,87 @@ import pylab as pl
 from tqdm import tqdm
 import requests
 """
-
-
-
-
-
 for import_line in imports.split('\n'):
     try:
         exec(import_line)    
     except ImportError as e:
         print("ImportException:", e)
+
+
+
+def it_is_jupyter_notebook():
+    try:
+        from IPython import get_ipython
+        if 'IPKernelApp' not in get_ipython().config:
+            return False
+    except ImportError:
+        return False
+
+    except:
+        return False
+    return True
+
+def uint8(t):
+    t = np.round(255*(t / t.max())).astype("uint8")
+    return t
+
+
+
+global vr, frame_counter, frame, key, frame_width, frame_height
+global n_frames 
+
+
+def run_video_loop(video_filename, inside_video_loop_func, 
+every_n_th_frame=None):
+    global vr, frame_counter, frame, key, frame_width, frame_height
+    global n_frames 
+    vr = cv2.VideoCapture(smart_file_finder(video_filename, start_path="."))
+    n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_height, frame_width = vr.get(4), vr.get(3)
+    key = -1
+    for frame_counter in tqdm(range(n_frames)):
+        ret, frame = vr.read()
+        if every_n_th_frame is not None:
+            for _ in range(0, every_n_th_frame - 1):
+                vr.read()
+
+        
+        
+        res = inside_video_loop_func(frame, frame_counter, key, frame_width, frame_height, n_frames)
+        if res is None: frame_to_show = frame
+        else: frame_to_show = res
+        img = fit_img_center(frame_to_show, width=1900, height=1000)
+        cv2.imshow("Main", img)
+        key = cv2.waitKey(1)
+        if key in (27, ord('q')):
+            break
+
+        if key in [ord('l'), 65361]:
+            current_frame_number = vr.get(1) - 100*every_n_th_frame
+            vr.set(1, current_frame_number)
+
+
+        if key in [ord('r'), 65363]:
+            current_frame_number = vr.get(1) + 100*every_n_th_frame
+            vr.set(1, current_frame_number)
+
+        if key == 32:
+            print("Paused. Press SPACE to continue")
+            while cv2.waitKey(1) & 0xFF != 32:
+                key = cv2.waitKey(1)
+                time.sleep(0.02)
+
+    cv2.destroyAllWindows()
+    vr.release()
+
+
+
+def print_columns(*args):
+    output  = [str(a).split('\n') for a in args]
+    for x in zip(*output):
+        for a in x:
+            print(a, "    ", end="")
+        print()    
 
 
 def simple_tuple(a):
@@ -62,8 +132,10 @@ def date_time_filename():
     return f'{time.ctime().replace(":", "-").replace(" ", "_")}.txt'
 
 def write_to_file(*args, end="\n", sep=" ", file_name=None, self={}):
+    if file_name is not None:
+        self["file_name"] = file_name
+
     file_name = self.get('file_name', date_time_filename())
-    self["file_name"] = file_name
 
     with open(file_name, "a") as f:
         f.write(sep.join(map(str, args)) + end)
@@ -127,10 +199,26 @@ def crop_nonzero(img):
     return img[y1: y2, x1: x2]
 
 
+
 def nonzero_subrectangle_coordinates(img):
     Y, X = np.nonzero(img.sum(axis=2))
     y1, y2, x1, x2 = Y.min(), Y.max(), X.min(), X.max()
     return x1, y1, x2, y2
+
+nonzero_rectangle = nonzero_subrectangle_coordinates
+
+
+def rectangle(img, *args, **kwargs):
+
+    if isinstance(args[1], tuple) and len(args[0]) == 2:
+        return cv2.rectangle(*args, **kwargs)
+    elif isinstance(args[1], tuple) and len(args[0]) == 4:
+        return cv2.rectangle(*(args[1:]), **kwargs)
+    elif all(isinstance(t, numbers.Number) for t in args[: 4]):
+        x1, y1, x2, y2 = simple_tuple(args)[: 4]
+        return cv2.rectangle(img, (x1, y1), (x2, y2), *args, **kwargs)
+    raise TypeError("What has it to do with a rectangle?")
+
 
 
 def smart_file_finder(file_name, start_path="."):

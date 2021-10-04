@@ -74,8 +74,30 @@ def image_grid(img_arr, max_col, margin=1, background_color=0):
 def random_RGB():
     return [random.randint(0, 255) for _ in range(3)]
 
-def put_img2_to_img_at_xy(img, img2, x, y):
+def add_img2_to_img_at_xy(img, img2, x, y):
+    h1, w1 = img.shape[: 2]
+    h2, w2 = img2.shape[: 2]
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(w1, x + w2)
+    y2 = min(h1, y + h2)
     
+    xA = -min(0, x)
+    yA = -min(0, y)
+    
+    
+    delta_x = x2 - x1
+    delta_y = y2 - y1
+    
+    if x1 >= x2 or y1 >= y2: return
+    img[y1: y2, x1: x2] = (img[y1: y2, x1: x2] + 
+                       img2[yA: yA + delta_y, xA: xA + delta_x]
+                      )
+  
+
+def put_img2_to_img_at_xy(img, img2, x, y=None):
+    if y is None:
+        x, y = x
     h1, w1 = img.shape[: 2]
     h2, w2 = img2.shape[: 2]
     x1 = max(0, x)
