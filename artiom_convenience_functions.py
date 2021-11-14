@@ -1,6 +1,7 @@
 import sys, os, glob
 import random
 import time
+from collections.abc import Iterable
 imports = """
 import cv2
 import numpy as np
@@ -17,6 +18,53 @@ for import_line in imports.split('\n'):
 
 
 
+
+
+
+def add_img2_to_img_at_xy(img, img2, x, y):
+    h1, w1 = img.shape[: 2]
+    h2, w2 = img2.shape[: 2]
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(w1, x + w2)
+    y2 = min(h1, y + h2)
+    
+    xA = -min(0, x)
+    yA = -min(0, y)
+    
+    
+    delta_x = x2 - x1
+    delta_y = y2 - y1
+    
+    if x1 >= x2 or y1 >= y2: return
+    img[y1: y2, x1: x2] = (img[y1: y2, x1: x2] + 
+                       img2[yA: yA + delta_y, xA: xA + delta_x]
+                      )
+  
+
+def put_img2_to_img_at_xy(img, img2, x, y=None):
+    if y is None:
+        x, y = x
+    h1, w1 = img.shape[: 2]
+    h2, w2 = img2.shape[: 2]
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(w1, x + w2)
+    y2 = min(h1, y + h2)
+    
+    xA = -min(0, x)
+    yA = -min(0, y)
+    
+    
+    delta_x = x2 - x1
+    delta_y = y2 - y1
+    
+    if x1 >= x2 or y1 >= y2: return
+    img[y1: y2, x1: x2] =  img2[yA: yA + delta_y, xA: xA + delta_x]
+                      
+
+
+
 def it_is_jupyter_notebook():
     try:
         from IPython import get_ipython
@@ -29,10 +77,14 @@ def it_is_jupyter_notebook():
         return False
     return True
 
-def uint8(t):
+def uint8_normalized(t):
     t = np.round(255*(t / t.max())).astype("uint8")
     return t
 
+
+def uint8(t):
+    t = np.round(t).astype("uint8")
+    return t
 
 
 global vr, frame_counter, frame, key, frame_width, frame_height
@@ -40,22 +92,35 @@ global n_frames
 
 
 def run_video_loop(video_filename, inside_video_loop_func, 
-every_n_th_frame=None):
+every_n_th_frame=None, start_frame=None):
     global vr, frame_counter, frame, key, frame_width, frame_height
     global n_frames 
-    vr = cv2.VideoCapture(smart_file_finder(video_filename, start_path="."))
-    n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_height, frame_width = vr.get(4), vr.get(3)
+    if video_filename is not None:
+        vr = cv2.VideoCapture(smart_file_finder(video_filename, start_path="."))
+        if start_frame:
+            vr.set(1, start_frame)
+        n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_height, frame_width = vr.get(4), vr.get(3)
+    else:
+        n_frames = 1000000
+        frame_height, frame_width = None, None
     key = -1
     for frame_counter in tqdm(range(n_frames)):
-        ret, frame = vr.read()
-        if every_n_th_frame is not None:
-            for _ in range(0, every_n_th_frame - 1):
-                vr.read()
+        
+        if video_filename is not None:
+            ret, frame = vr.read()
+            if every_n_th_frame is not None:
+                for _ in range(0, every_n_th_frame - 1):
+                    vr.read()
+        else:
+            frame = None
 
         
         
-        res = inside_video_loop_func(frame, frame_counter, key, frame_width, frame_height, n_frames)
+        try:
+            res = inside_video_loop_func(frame, frame_counter, key, frame_width, frame_height, n_frames)
+        except StopIteration:
+            break
         if res is None: frame_to_show = frame
         else: frame_to_show = res
         img = fit_img_center(frame_to_show, width=1900, height=1000)
@@ -80,7 +145,7 @@ every_n_th_frame=None):
                 time.sleep(0.02)
 
     cv2.destroyAllWindows()
-    vr.release()
+    if video_filename is not None: vr.release()
 
 
 
@@ -121,6 +186,25 @@ def find_rect_range(points):
 
 
 from math import pi
+from math import sin, cos
+
+
+def rotate(coords, origin, angle):
+    """ Rotates given point around given origin
+    """
+    x, y = coords
+    xc, yc = origin
+
+    cos_angle = cos(angle)
+    sin_angle = sin(angle)
+
+    x_vector = x - xc
+    y_vector = y - yc
+
+    x_new = x_vector * cos(angle) - y_vector * sin(angle) + xc
+    y_new = x_vector * sin(angle) + y_vector * cos(angle) + yc
+    return (x_new, y_new)
+
 
 def rotate_image(image, center, angle):
     row,col = image.shape[: 2]
@@ -187,7 +271,20 @@ def round_tuple(*args):
 
 
 
-def rectagle_from_img(img, x1, y1, x2, y2):
+def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
+    if x2 is None and y2 is None:
+        x1, y1 = pt_1
+        x2, y2 = pt_2
+    elif x2 is not None and y2 is not None:
+        x1 = pt_1
+        y1 = pt_2
+    
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    
+    x2 = min(img.shape[1], x2)
+    y2 = min(img.shape[0], y2)
+
     return img[y1: y2, x1: x2]
 
 get_rectangle_from_img = rectagle_from_img
@@ -220,33 +317,56 @@ def rectangle(img, *args, **kwargs):
     raise TypeError("What has it to do with a rectangle?")
 
 
+def read_frame_and_show(cap, title="Main"):
+    cap.set(0, ind)
+    ret, frame = cap.read()
+    cv2.imshow(title, frame)
+    key = cv2. waitKey(1)
+    return frame, key
+
+    
+
+
 
 def smart_file_finder(file_name, start_path="."):
     if os.path.exists(file_name):
         return file_name
-    file_name = glob.glob(
-        os.path.join(start_path, "**", "*" + file_name), recursive=True)[:1]
+
+    file_name = (glob.glob(
+        os.path.join(start_path, "**", file_name), recursive=True))[:1]
+
+
     if file_name:
-        print()#f"That's what I found: {file_name}")
+        print(f"That's what I found: {file_name}")
         return file_name[0]
     else:
         print(f"Sorry, haven't found anything like this ({file_name})")
+
+                 
+
+def random_file(mask, *args, **kwargs):
+    file_list = glob.glob(os.path.join(mask),  *args, **kwargs)
+    file_name = random.choice(file_list)
+    return file_name
 
 
 def show(
     a,
     BGR=None,
+    figsize=(24, 12), 
     *args,
     state={"BGR": False},
     **kwargs,
 ):
     if BGR is not None:
+        if isinstance(BGR, str):
+            BGR = True if BGR.lower() == 'bgr' else False
         state["BGR"] = BGR
 
     if state["BGR"]:
         a = RGB(a)
 
-    plt.figure(figsize=(24, 12))
+    plt.figure(figsize=figsize)
     try:
 
         plt.imshow(a, *args, **kwargs)
@@ -257,6 +377,24 @@ def show(
 
 
 s = show
+
+def show_image_and_wait(img):
+    cv2.imshow("Hello!", img)
+    key = cv2.waitKey(0)
+    if key in (27, ord('q')):
+        sys.exit()
+    return key
+
+
+def imshow(img):
+    cv2.imshow("Hello!", img)
+    key = cv2.waitKey(1)
+    if key in (27, ord('q')):
+        sys.exit()
+    
+    return key
+
+
 
 
 def RGB_to_BGR(a):

@@ -1,4 +1,5 @@
 import random
+import time
 from itertools import product
 
 import numpy as np
@@ -73,6 +74,22 @@ def image_grid(img_arr, max_col, margin=1, background_color=0):
 
 def random_RGB():
     return [random.randint(0, 255) for _ in range(3)]
+
+
+def gradual_imshow(title, img, previous_img_l=[None], n_interframes=100):
+    if previous_img_l[0] is not None:
+        previous_img = previous_img_l[0]
+        for t in np.linspace(0, 1, n_interframes):
+            result_img = ((1 - t) * previous_img + t * img).astype("uint8")
+            cv2.imshow(title, result_img)
+            key = cv2.waitKey(1)
+            time.sleep(1 / 50)
+
+    cv2.imshow(title, img)
+    previous_img_l[0] = img.copy()
+
+
+
 
 def add_img2_to_img_at_xy(img, img2, x, y):
     h1, w1 = img.shape[: 2]
