@@ -19,7 +19,8 @@ for import_line in imports.split('\n'):
 
 
 
-
+def distance_between(vec_1, vec_2):
+    return math.sqrt(sum([(x - y)**2 for x, y in zip(vec_1, vec_2)]))
 
 def add_img2_to_img_at_xy(img, img2, x, y):
     h1, w1 = img.shape[: 2]
@@ -404,6 +405,15 @@ def RGB_to_BGR(a):
 def BGR_to_RGB(a):
     return cv2.cvtColor(a, cv2.COLOR_BGR2RGB)
 
+
+def stretch_horizontally(img, alpha):
+    h, w = img.shape[: 2]
+    return resize(img, width=round(w * alpha))
+
+
+def stretch_vertically(img, alpha):
+    h, w = img.shape[: 2]
+    return resize(img, height=round(h * alpha))
 
 def resize(img, height=None, width=None, **kwargs):
 
