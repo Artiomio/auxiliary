@@ -10,10 +10,10 @@ def draw_text(
     *messages,
     x=None,
     y=None,
-    self=dict(left_margin=30, cursor_x=30, cursor_y=30, lines_margin=3, words_margin=3),
+    self=dict(left_margin=30, cursor_x=30, cursor_y=30, lines_margin=15, words_margin=4),
     end="\n",
     font=cv2.FONT_HERSHEY_SIMPLEX,
-    font_scale=2,
+    font_scale=1.5,
     thickness=2, 
     round_floats = 3,
     image=None,
@@ -27,6 +27,8 @@ def draw_text(
         x = self["cursor_x"]
     else:
         self["cursor_x"] = x
+        self["left_margin"] = x
+
 
     if y is None:
         y = self["cursor_y"]
@@ -49,7 +51,7 @@ def draw_text(
             
         cv2.putText(image, message, (x, y), font, font_scale, (255, 255, 255), thickness)
         y += text_height + self["lines_margin"]
-        x += text_width + self["words_margin"]
+        x = self["left_margin"]
 
     self["cursor_y"] = y + self["lines_margin"]
     self["cursor_x"] = self["left_margin"]
@@ -237,6 +239,11 @@ def draw_alpha_plus_invertion_xs_ys(img, xs, ys, color_RGB=None, alpha=.5):
     tmp = np.round(alpha * color_RGB + (1 - alpha) * img[ys, xs])
     tmp = - tmp + (255, 255, 255)
     img[ys, xs, :3] = tmp
+
+
+def draw_cross(img, x, y, color_RGB=(0, 0, 0), a=20):
+    img[y - a: y + a, x] ^= np.array([255, 255, 255], dtype="uint8")
+    img[y, x - a: x + a] ^= np.array([255, 255, 255], dtype="uint8")
 
 def draw_thick_alpha_rectangle(img,  pt1, pt2, x2=None, y2=None, color_RGB=None, thickness=30, alpha=0.8):
     

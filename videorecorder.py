@@ -41,8 +41,9 @@ new_imshow_counter = {}
     
 video_output_configs = dict(video_frame_rate=60, 
                             redraw_only_every_nth_frame=1,
-                            last_frame_meditation_time_sec=5,
-                            fading_out_time_sec=10
+                            last_frame_meditation_time_sec=.5,
+                            fading_out_time_sec=1,
+                            default_video_folder="./video/"
                             )
 
 
@@ -72,9 +73,10 @@ def save_to_video(img, file_name_arg=None, frame_rate=None, width_arg=None, heig
         if more_video_params:
             video_output_configs.update(more_video_params)
 
-
+        default_video_folder = video_output_configs["default_video_folder"]
         default_video_writer = VideoRecorder(short_filename=current_video_path, 
-                                                path='.',
+                                                path=(default_video_folder if (os.path.exists(default_video_folder) 
+                                                and os.path.isdir(default_video_folder)) else "./"),
                                                 frame_rate=frame_rate,
                                                 size=(video_width, video_height))
 

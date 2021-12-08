@@ -18,6 +18,42 @@ for import_line in imports.split('\n'):
 
 
 
+def image_with_saturation(img, alpha=0.8):
+    img_bw_ = (np.round(img.mean(axis=2))).astype("uint8")#.reshape(img.shape[0], -1)
+    
+    img_bw = img.copy()
+    img_bw[:, :, 0] = img_bw_
+    img_bw[:, :, 1] = img_bw_
+    img_bw[:, :, 2] = img_bw_    
+
+    
+    res = np.round(img * alpha + img_bw * (1 - alpha)).astype("uint8")
+    return res
+
+
+
+def corrected_file_name(file_name):
+    if not os.path.isfile(file_name):
+        return file_name
+    file_name_, file_ext = os.path.splitext(file_name)
+
+    j = 1
+    new_name = file_name
+    while os.path.isfile(new_name):
+        new_name = file_name_ + "." + str(j) + file_ext
+        j += 1
+
+    return new_name
+
+
+def img_center_xy(img):
+    return round(img.shape[1] / 2), round(img.shape[0] / 2),
+
+def width(img):
+    return img.shape[1]
+
+def height(img):
+    return img.shape[0]
 
 def distance_between(vec_1, vec_2):
     return math.sqrt(sum([(x - y)**2 for x, y in zip(vec_1, vec_2)]))
@@ -93,11 +129,11 @@ global n_frames
 
 
 def run_video_loop(video_filename, inside_video_loop_func, 
-every_n_th_frame=None, start_frame=None):
+every_n_th_frame=1, start_frame=None, framerate=30):
     global vr, frame_counter, frame, key, frame_width, frame_height
     global n_frames 
     if video_filename is not None:
-        vr = cv2.VideoCapture(smart_file_finder(video_filename, start_path="."))
+        vr = cv2.VideoCapture(video_filename)
         if start_frame:
             vr.set(1, start_frame)
         n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -106,11 +142,12 @@ every_n_th_frame=None, start_frame=None):
         n_frames = 1000000
         frame_height, frame_width = None, None
     key = -1
-    for frame_counter in tqdm(range(n_frames)):
-        
+    frame_counter = -1
+    for frame_counter_i in tqdm(range(n_frames)):
+        frame_counter += 1    
         if video_filename is not None:
             ret, frame = vr.read()
-            if every_n_th_frame is not None:
+            if every_n_th_frame is not None and every_n_th_frame > 1:
                 for _ in range(0, every_n_th_frame - 1):
                     vr.read()
         else:
@@ -123,20 +160,29 @@ every_n_th_frame=None, start_frame=None):
         except StopIteration:
             break
         if res is None: frame_to_show = frame
+        elif isinstance(res, int) and res == -1:
+            continue
         else: frame_to_show = res
+
         img = fit_img_center(frame_to_show, width=1900, height=1000)
         cv2.imshow("Main", img)
+
+        
+        delta_frames = 1000
+        time.sleep(1 / framerate)      
         key = cv2.waitKey(1)
         if key in (27, ord('q')):
             break
 
         if key in [ord('l'), 65361]:
-            current_frame_number = vr.get(1) - 100*every_n_th_frame
+            current_frame_number = vr.get(1) - delta_frames 
+            frame_counter -= delta_frames
             vr.set(1, current_frame_number)
 
 
         if key in [ord('r'), 65363]:
-            current_frame_number = vr.get(1) + 100*every_n_th_frame
+            current_frame_number = vr.get(1) + delta_frames
+            frame_counter += delta_frames
             vr.set(1, current_frame_number)
 
         if key == 32:
@@ -413,7 +459,7 @@ def stretch_horizontally(img, alpha):
 
 def stretch_vertically(img, alpha):
     h, w = img.shape[: 2]
-    return resize(img, height=round(h * alpha))
+    return cv2.resize(img, (w, round(h * alpha)))
 
 def resize(img, height=None, width=None, **kwargs):
 
@@ -496,3 +542,60 @@ def send_to_artmonitor(img, secret="импредикабельность", jpg_q
                         data=jpg_bytes,
                         headers={'Content-Type': 'application/octet-stream'})
     # print(f"Response: {res}\nReady: {len(jpg_bytes)} bytes sent in {time.time() - start} sec")
+
+
+def plot_as_array(*args, **kwargs):
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    img_plot = Image.open(buf)
+    img = np.asarray(img_plot)
+    return img
+
+
+def video_player(video_fname, callbacks=[], start_frame=0,
+ number_of_frames_to_skip=0):
+    try:
+        cap = cv2.VideoCapture(video_fname)    
+    except:
+        cap = video_fname
+
+    if start_frame:
+        cap.set(1, start_frame)
+        
+    current_frame_number = start_frame
+    while True:
+
+        
+        for _ in range(number_of_frames_to_skip):
+            ret, frame = cap.read()
+
+        current_frame_number += number_of_frames_to_skip
+
+
+        for cb in callbacks:
+            cb()
+
+
+        ret, frame = cap.read()
+        cv2.imshow("Video", frame)
+
+        
+        key = cv2.waitKeyEx(1)
+        print(key)
+
+        if key & 0xFF == 27:
+            print("Нажали Esc, выхожу из цикла")
+            break
+
+
+        if key == ord('l'):
+            print('Left')
+            current_frame_number -= 300
+            cap.set(1, current_frame_number)
+
+
+        if key == ord('r'):
+            print('Right')
+            current_frame_number += 300
+            cap.set(1, current_frame_number)
