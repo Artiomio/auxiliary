@@ -2,6 +2,9 @@ import sys, os, glob
 import random
 import time
 from collections.abc import Iterable
+import io
+from PIL import Image
+
 imports = """
 import cv2
 import numpy as np
@@ -10,26 +13,56 @@ import pylab as pl
 from tqdm import tqdm
 import requests
 """
-for import_line in imports.split('\n'):
+for import_line in imports.split("\n"):
     try:
-        exec(import_line)    
+        exec(import_line)
     except ImportError as e:
         print("ImportException:", e)
 
 
+def random_RGB():
+    return [random.randint(0, 255) for _ in range(3)]
+
+
+def skip_frames(vr, delta_frames):
+    current_frame_number = vr.get(cv2.CAP_PROP_POS_FRAMES) + delta_frames
+    vr.set(1, current_frame_number)
+
+
+def skip_frames_by_reading_one_by_one(vr, delta_frames):
+    for i in range(delta_frames):
+        vr.read()
+
+
 
 def image_with_saturation(img, alpha=0.8):
-    img_bw_ = (np.round(img.mean(axis=2))).astype("uint8")#.reshape(img.shape[0], -1)
-    
+    img_bw_ = (np.round(img.mean(axis=2))).astype("uint8")  # .reshape(img.shape[0], -1)
+
     img_bw = img.copy()
     img_bw[:, :, 0] = img_bw_
     img_bw[:, :, 1] = img_bw_
-    img_bw[:, :, 2] = img_bw_    
+    img_bw[:, :, 2] = img_bw_
 
-    
     res = np.round(img * alpha + img_bw * (1 - alpha)).astype("uint8")
     return res
 
+
+def gradual_imshow(
+    title, img, previous_img_l=[None], n_interframes=100, imshow=None, pause=1 / 50
+):
+    if previous_img_l[0] is not None:
+        previous_img = previous_img_l[0]
+        for t in np.linspace(0, 1, n_interframes):
+            result_img = ((1 - t) * previous_img + t * img).astype("uint8")
+            if imshow:
+                imshow(title, result_img)
+            else:
+                cv2.imshow(title, result_img)
+            key = cv2.waitKey(1)
+            time.sleep(pause)
+
+    cv2.imshow(title, img)
+    previous_img_l[0] = img.copy()
 
 
 def corrected_file_name(file_name):
@@ -47,65 +80,90 @@ def corrected_file_name(file_name):
 
 
 def img_center_xy(img):
-    return round(img.shape[1] / 2), round(img.shape[0] / 2),
+    return (
+        round(img.shape[1] / 2),
+        round(img.shape[0] / 2),
+    )
+
 
 def width(img):
     return img.shape[1]
 
+
 def height(img):
     return img.shape[0]
 
+
 def distance_between(vec_1, vec_2):
-    return math.sqrt(sum([(x - y)**2 for x, y in zip(vec_1, vec_2)]))
+    return math.sqrt(sum([(x - y) ** 2 for x, y in zip(vec_1, vec_2)]))
+
 
 def add_img2_to_img_at_xy(img, img2, x, y):
-    h1, w1 = img.shape[: 2]
-    h2, w2 = img2.shape[: 2]
+    h1, w1 = img.shape[:2]
+    h2, w2 = img2.shape[:2]
     x1 = max(0, x)
     y1 = max(0, y)
     x2 = min(w1, x + w2)
     y2 = min(h1, y + h2)
-    
+
     xA = -min(0, x)
     yA = -min(0, y)
-    
-    
+
     delta_x = x2 - x1
     delta_y = y2 - y1
-    
-    if x1 >= x2 or y1 >= y2: return
-    img[y1: y2, x1: x2] = (img[y1: y2, x1: x2] + 
-                       img2[yA: yA + delta_y, xA: xA + delta_x]
-                      )
-  
 
+    if x1 >= x2 or y1 >= y2:
+        return
+    img[y1:y2, x1:x2] = img[y1:y2, x1:x2] + img2[yA : yA + delta_y, xA : xA + delta_x]
+
+
+def draw_shade(img, x1, y1, x2, y2, shade_dx=50,  shade_dy=50):
+    shade_img = img[y1 + shade_dy: y2 + shade_dy, x1 + shade_dx: x2 + shade_dx] 
+    shade_img -= (shade_img  // 4)
+    put_img2_to_img_at_xy(img, shade_img, x=x1, y=y1)
+
+    
 def put_img2_to_img_at_xy(img, img2, x, y=None):
     if y is None:
         x, y = x
-    h1, w1 = img.shape[: 2]
-    h2, w2 = img2.shape[: 2]
+    h1, w1 = img.shape[:2]
+    h2, w2 = img2.shape[:2]
     x1 = max(0, x)
     y1 = max(0, y)
     x2 = min(w1, x + w2)
     y2 = min(h1, y + h2)
-    
+
     xA = -min(0, x)
     yA = -min(0, y)
-    
-    
+
     delta_x = x2 - x1
     delta_y = y2 - y1
-    
-    if x1 >= x2 or y1 >= y2: return
-    img[y1: y2, x1: x2] =  img2[yA: yA + delta_y, xA: xA + delta_x]
-                      
+
+    if x1 >= x2 or y1 >= y2:
+        return
+    img[y1:y2, x1:x2] = img2[yA : yA + delta_y, xA : xA + delta_x]
+
+
+
+# With shadow
+def put_img2_to_img_at_xy_with_shadow(img, img2, x, y=None, shade_dx=50,
+shade_dy=50, coeff=4):
+    frame = img
+    if y is None:
+        x, y = x
+
+    shade_img = frame[y + shade_dy: y + img2.shape[0]  + shade_dy, x + shade_dx: x + img2.shape[1] + shade_dx]
+    shade_img -= (shade_img  // coeff)
+    put_img2_to_img_at_xy(frame, img2, x=x, y=y)
+
 
 
 
 def it_is_jupyter_notebook():
     try:
         from IPython import get_ipython
-        if 'IPKernelApp' not in get_ipython().config:
+
+        if "IPKernelApp" not in get_ipython().config:
             return False
     except ImportError:
         return False
@@ -114,9 +172,21 @@ def it_is_jupyter_notebook():
         return False
     return True
 
+
+def uint8_normalized_std(array):
+    array = np.round(255 * (array / 2 /array.max()))
+    result = (array >= 0) * (array <= 255) * array
+
+
+    return result.astype("uint8")
+
+
+
+
 def uint8_normalized(t):
-    t = np.round(255*(t / t.max())).astype("uint8")
-    return t
+    t = np.round(255 * (t / t.max()))
+    
+    return t.astype("uint8")
 
 
 def uint8(t):
@@ -125,26 +195,47 @@ def uint8(t):
 
 
 global vr, frame_counter, frame, key, frame_width, frame_height
-global n_frames 
+global n_frames
 
 
-def run_video_loop(video_filename, inside_video_loop_func, 
-every_n_th_frame=1, start_frame=None, framerate=30):
+def run_video_loop(
+    video_filename,
+    inside_video_loop_func,
+    every_n_th_frame=1,
+    start_frame=0,
+    framerate=60,
+    full_screen=True,
+    autoresize=True
+):
     global vr, frame_counter, frame, key, frame_width, frame_height
-    global n_frames 
+    global n_frames
+
+    window_title = "Main"
+    cv2.namedWindow(window_title, cv2.WND_PROP_FULLSCREEN)
+    if full_screen:
+
+        cv2.namedWindow(window_title, cv2.WND_PROP_FULLSCREEN)
+
+        cv2.setWindowProperty(
+            window_title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
+        )
+    cv2.moveWindow(window_title, 0, 0)
     if video_filename is not None:
         vr = cv2.VideoCapture(video_filename)
         if start_frame:
             vr.set(1, start_frame)
         n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+        if not n_frames > 1:
+            n_frames = 10**10
+
         frame_height, frame_width = vr.get(4), vr.get(3)
     else:
         n_frames = 1000000
         frame_height, frame_width = None, None
     key = -1
-    frame_counter = -1
+    frame_counter = -1  + start_frame
     for frame_counter_i in tqdm(range(n_frames)):
-        frame_counter += 1    
+        frame_counter += 1
         if video_filename is not None:
             ret, frame = vr.read()
             if every_n_th_frame is not None and every_n_th_frame > 1:
@@ -153,37 +244,40 @@ every_n_th_frame=1, start_frame=None, framerate=30):
         else:
             frame = None
 
-        
-        
         try:
-            res = inside_video_loop_func(frame, frame_counter, key, frame_width, frame_height, n_frames)
+            res = inside_video_loop_func(
+                frame, frame_counter, key, frame_width, frame_height, n_frames
+            )
         except StopIteration:
             break
-        if res is None: frame_to_show = frame
+        if res is None:
+            frame_to_show = frame
         elif isinstance(res, int) and res == -1:
             continue
-        else: frame_to_show = res
+        else:
+            frame_to_show = res
 
-        img = fit_img_center(frame_to_show, width=1900, height=1000)
+        if autoresize:
+            img = fit_img_center(frame_to_show, width=1900, height=1000)
+        else:
+            img = frame_to_show
         cv2.imshow("Main", img)
 
-        
         delta_frames = 1000
-        time.sleep(1 / framerate)      
+        time.sleep(1 / framerate)
         key = cv2.waitKey(1)
-        if key in (27, ord('q')):
+        if key in (27, ord("q")):
             break
 
-        if key in [ord('l'), 65361]:
-            current_frame_number = vr.get(1) - delta_frames 
+        if key in [ord("l"), 65361]:
+            current_frame_number = vr.get(1) - delta_frames
             frame_counter -= delta_frames
-            vr.set(1, current_frame_number)
+            vr.set(cv2.CAP_PROP_POS_FRAMES, current_frame_number)
 
-
-        if key in [ord('r'), 65363]:
+        if key in [ord("r"), 65363]:
             current_frame_number = vr.get(1) + delta_frames
             frame_counter += delta_frames
-            vr.set(1, current_frame_number)
+            vr.set(cv2.CAP_PROP_POS_FRAMES, current_frame_number)
 
         if key == 32:
             print("Paused. Press SPACE to continue")
@@ -192,16 +286,35 @@ every_n_th_frame=1, start_frame=None, framerate=30):
                 time.sleep(0.02)
 
     cv2.destroyAllWindows()
-    if video_filename is not None: vr.release()
+    if video_filename is not None:
+        vr.release()
 
 
 
-def print_columns(*args):
+def columns(*args):
     output  = [str(a).split('\n') for a in args]
     for x in zip(*output):
         for a in x:
             print(a, "    ", end="")
-        print()    
+        print("")    
+
+    
+
+def print_columns(*args):
+    output = [str(a).split("\n") for a in args]
+    for x in zip(*output):
+        for a in x:
+            print(a, "    ", end="")
+        print()
+
+def get_columns_str(*args):
+    output = [str(a).split("\n") for a in args]
+    s = []
+    for x in zip(*output):
+        for a in x:
+            s.append(a + "    ")
+        s.append("\n")
+    return "".join(s)
 
 
 def simple_tuple(a):
@@ -213,23 +326,24 @@ def simple_tuple(a):
             s.append(x)
     return s
 
+
 def rect_center(a):
     x1, y1, x2, y2 = open_list(a)
     return ((x1 + x2) / 2, (y1 + y2) / 2)
 
 
-
 """ Finds the minimal horizontal rectangle containing given points
     points is a list of points e.g. [(3,5),(-1,4),(5,6)]
 """
+
+
 def find_rect_range(points):
     min_x = min(points, key=lambda x: x[0])[0]
     max_x = max(points, key=lambda x: x[0])[0]
 
     min_y = min(points, key=lambda x: x[1])[1]
     max_y = max(points, key=lambda x: x[1])[1]
-    return((min_x, min_y), (max_x, max_y))
-
+    return ((min_x, min_y), (max_x, max_y))
 
 
 from math import pi
@@ -237,8 +351,7 @@ from math import sin, cos
 
 
 def rotate(coords, origin, angle):
-    """ Rotates given point around given origin
-    """
+    """Rotates given point around given origin"""
     x, y = coords
     xc, yc = origin
 
@@ -254,24 +367,28 @@ def rotate(coords, origin, angle):
 
 
 def rotate_image(image, center, angle):
-    row,col = image.shape[: 2]
+    row, col = image.shape[:2]
     rot_mat = cv2.getRotationMatrix2D(tuple(center), angle, 1.0)
     new_image = cv2.warpAffine(image, rot_mat, (col, row))
     return new_image
 
+
 def date_time_filename():
     return f'{time.ctime().replace(":", "-").replace(" ", "_")}.txt'
+
 
 def write_to_file(*args, end="\n", sep=" ", file_name=None, self={}):
     if file_name is not None:
         self["file_name"] = file_name
 
-    file_name = self.get('file_name', date_time_filename())
+    file_name = self.get("file_name", date_time_filename())
 
     with open(file_name, "a") as f:
         f.write(sep.join(map(str, args)) + end)
 
+
 print_to_file = write_to_file
+
 
 def pause(t, waitKey):
     dt = 0.3
@@ -280,17 +397,17 @@ def pause(t, waitKey):
         time.sleep(dt)
         key = waitKey(1)
 
-    
     return key
-    
+
 
 def waitKey(max_pause=10):
     start = time.time()
     while time.time() - start < max_pause:
         key = cv2.waitKey(1)
-        if key > 0: return key
+        if key > 0:
+            return key
 
-    
+
 def denormalize_coordinates(pt, width, height):
     try:
         x, y = pt
@@ -301,10 +418,6 @@ def denormalize_coordinates(pt, width, height):
         return res
 
 
-
-
-
-
 def round_tuple(*args):
     if len(args) == 1:
         l = args[0]
@@ -312,10 +425,7 @@ def round_tuple(*args):
 
         l = args
 
-    return tuple([int(round(x))  for x in list(l)])
-
-
-
+    return tuple([int(round(x)) for x in list(l)])
 
 
 def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
@@ -325,14 +435,15 @@ def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
     elif x2 is not None and y2 is not None:
         x1 = pt_1
         y1 = pt_2
-    
+
     x1 = max(0, x1)
     y1 = max(0, y1)
-    
+
     x2 = min(img.shape[1], x2)
     y2 = min(img.shape[0], y2)
 
-    return img[y1: y2, x1: x2]
+    return img[y1:y2, x1:x2]
+
 
 get_rectangle_from_img = rectagle_from_img
 
@@ -340,14 +451,14 @@ get_rectangle_from_img = rectagle_from_img
 def crop_nonzero(img):
     Y, X = np.nonzero(img.sum(axis=2))
     y1, y2, x1, x2 = Y.min(), Y.max(), X.min(), X.max()
-    return img[y1: y2, x1: x2]
-
+    return img[y1:y2, x1:x2]
 
 
 def nonzero_subrectangle_coordinates(img):
     Y, X = np.nonzero(img.sum(axis=2))
     y1, y2, x1, x2 = Y.min(), Y.max(), X.min(), X.max()
     return x1, y1, x2, y2
+
 
 nonzero_rectangle = nonzero_subrectangle_coordinates
 
@@ -358,8 +469,8 @@ def rectangle(img, *args, **kwargs):
         return cv2.rectangle(*args, **kwargs)
     elif isinstance(args[1], tuple) and len(args[0]) == 4:
         return cv2.rectangle(*(args[1:]), **kwargs)
-    elif all(isinstance(t, numbers.Number) for t in args[: 4]):
-        x1, y1, x2, y2 = simple_tuple(args)[: 4]
+    elif all(isinstance(t, numbers.Number) for t in args[:4]):
+        x1, y1, x2, y2 = simple_tuple(args)[:4]
         return cv2.rectangle(img, (x1, y1), (x2, y2), *args, **kwargs)
     raise TypeError("What has it to do with a rectangle?")
 
@@ -368,31 +479,32 @@ def read_frame_and_show(cap, title="Main"):
     cap.set(0, ind)
     ret, frame = cap.read()
     cv2.imshow(title, frame)
-    key = cv2. waitKey(1)
+    key = cv2.waitKey(1)
     return frame, key
 
-    
 
-
-
-def smart_file_finder(file_name, start_path="."):
+def smart_file_finder(file_name, start_path=".", verbose=True):
+    if file_name.startswith("http://") or file_name.startswith("https://"):
+        input("хаха Press Enter...")
+        return file_name
     if os.path.exists(file_name):
         return file_name
 
-    file_name = (glob.glob(
-        os.path.join(start_path, "**", file_name), recursive=True))[:1]
-
+    file_name = (glob.glob(os.path.join(start_path, "**", file_name), recursive=True))[
+        :1
+    ]
 
     if file_name:
-        print(f"That's what I found: {file_name}")
+        if verbose:
+            print(f"That's what I found: {file_name}")
         return file_name[0]
     else:
-        print(f"Sorry, haven't found anything like this ({file_name})")
+        if verbose:
+            print(f"Sorry, haven't found anything like this ({file_name})")
 
-                 
 
 def random_file(mask, *args, **kwargs):
-    file_list = glob.glob(os.path.join(mask),  *args, **kwargs)
+    file_list = glob.glob(os.path.join(mask), *args, **kwargs)
     file_name = random.choice(file_list)
     return file_name
 
@@ -400,14 +512,14 @@ def random_file(mask, *args, **kwargs):
 def show(
     a,
     BGR=None,
-    figsize=(24, 12), 
+    figsize=(24, 12),
     *args,
     state={"BGR": False},
     **kwargs,
 ):
     if BGR is not None:
         if isinstance(BGR, str):
-            BGR = True if BGR.lower() == 'bgr' else False
+            BGR = True if BGR.lower() == "bgr" else False
         state["BGR"] = BGR
 
     if state["BGR"]:
@@ -425,10 +537,11 @@ def show(
 
 s = show
 
+
 def show_image_and_wait(img):
     cv2.imshow("Hello!", img)
     key = cv2.waitKey(0)
-    if key in (27, ord('q')):
+    if key in (27, ord("q")):
         sys.exit()
     return key
 
@@ -436,12 +549,10 @@ def show_image_and_wait(img):
 def imshow(img):
     cv2.imshow("Hello!", img)
     key = cv2.waitKey(1)
-    if key in (27, ord('q')):
+    if key in (27, ord("q")):
         sys.exit()
-    
+
     return key
-
-
 
 
 def RGB_to_BGR(a):
@@ -453,16 +564,18 @@ def BGR_to_RGB(a):
 
 
 def stretch_horizontally(img, alpha):
-    h, w = img.shape[: 2]
+    h, w = img.shape[:2]
     return resize(img, width=round(w * alpha))
 
 
 def stretch_vertically(img, alpha):
-    h, w = img.shape[: 2]
+    h, w = img.shape[:2]
     return cv2.resize(img, (w, round(h * alpha)))
 
-def resize(img, height=None, width=None, **kwargs):
 
+def resize(img, height=None, width=None, **kwargs):
+    if img.shape[0] * img.shape[1] == 0:
+        return [0]
 
     if height is None and width is None:
         width = round(1920 * 0.8)
@@ -492,7 +605,7 @@ def half_the_size(img, *args, **kwargs):
     return cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), *args, **kwargs)
 
 
-def downsize(img, r=10, interpolation=cv2.INTER_NEAREST_EXACT, *args, **kwargs):
+def downsize(img, r=10, interpolation=cv2.INTER_NEAREST, *args, **kwargs):
     if r < 1:
         r = 1 / r
     return cv2.resize(img, (img.shape[1] // r, img.shape[0] // r), *args, **kwargs)
@@ -529,58 +642,57 @@ def fit_img_center(img, width=None, height=None, **kwargs):
         return new_img
 
 
-
-
-def send_to_artmonitor(img, secret="импредикабельность", jpg_quality=None, jpeg_quality=None, monitor_url="https://artmonitor.pythonanywhere.com"):
-    jpg_quality = 20 or (jpeg_quality or jpg_quality)    
-    url=f'{monitor_url}/{secret}/postimage/'
+def send_to_artmonitor(
+    img,
+    secret="импредикабельность",
+    jpg_quality=None,
+    jpeg_quality=None,
+    monitor_url="https://artmonitor.pythonanywhere.com",
+):
+    jpg_quality = 20 or (jpeg_quality or jpg_quality)
+    url = f"{monitor_url}/{secret}/postimage/"
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), jpg_quality]
-    result, encimg_jpg = cv2.imencode('.jpg', img, encode_param)
+    result, encimg_jpg = cv2.imencode(".jpg", img, encode_param)
     jpg_bytes = encimg_jpg.tobytes()
     start = time.time()
-    res = requests.post(url,
-                        data=jpg_bytes,
-                        headers={'Content-Type': 'application/octet-stream'})
+    res = requests.post(
+        url, data=jpg_bytes, headers={"Content-Type": "application/octet-stream"}
+    )
     # print(f"Response: {res}\nReady: {len(jpg_bytes)} bytes sent in {time.time() - start} sec")
 
 
 def plot_as_array(*args, **kwargs):
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     buf.seek(0)
     img_plot = Image.open(buf)
     img = np.asarray(img_plot)
     return img
 
 
-def video_player(video_fname, callbacks=[], start_frame=0,
- number_of_frames_to_skip=0):
+def video_player(video_fname, callbacks=[], start_frame=0, number_of_frames_to_skip=0):
     try:
-        cap = cv2.VideoCapture(video_fname)    
+        cap = cv2.VideoCapture(video_fname)
     except:
         cap = video_fname
 
     if start_frame:
         cap.set(1, start_frame)
-        
+
     current_frame_number = start_frame
     while True:
 
-        
         for _ in range(number_of_frames_to_skip):
             ret, frame = cap.read()
 
         current_frame_number += number_of_frames_to_skip
 
-
         for cb in callbacks:
             cb()
-
 
         ret, frame = cap.read()
         cv2.imshow("Video", frame)
 
-        
         key = cv2.waitKeyEx(1)
         print(key)
 
@@ -588,14 +700,12 @@ def video_player(video_fname, callbacks=[], start_frame=0,
             print("Нажали Esc, выхожу из цикла")
             break
 
-
-        if key == ord('l'):
-            print('Left')
+        if key == ord("l"):
+            print("Left")
             current_frame_number -= 300
             cap.set(1, current_frame_number)
 
-
-        if key == ord('r'):
-            print('Right')
+        if key == ord("r"):
+            print("Right")
             current_frame_number += 300
             cap.set(1, current_frame_number)
