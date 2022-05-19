@@ -517,11 +517,12 @@ def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
         y1 = pt_2
 
 
-    if 0 < x1 < x2 < 1 and 0 < y1 < y2  < 1:
+    #print(f"x1={x1}, y1={y1}, x2={x2}, y2={y2} ")
+    if 0 <= x1 <= x2 <= 1 and 0 <= y1 <= y2  <= 1:
         (x1, y1), (x2, y2) = denormalize_coordinates([(x1, y1), (x2, y2)],
-        width=img.shape[0],
-        height=img.shape[1])
-    
+        width=img.shape[1],
+        height=img.shape[0])
+        #print(f"После денормализации: x1={x1}, y1={y1}, x2={x2}, y2={y2} ")    
     
     x1 = max(0, x1)
     y1 = max(0, y1)
