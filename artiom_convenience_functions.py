@@ -1,5 +1,6 @@
 import sys, os, glob
 import random
+import math
 import time
 from collections.abc import Iterable
 import io
@@ -12,6 +13,7 @@ import matplotlib.pyplot as plt
 import pylab as pl
 from tqdm import tqdm
 import requests
+
 """
 for import_line in imports.split("\n"):
     try:
@@ -19,6 +21,30 @@ for import_line in imports.split("\n"):
     except ImportError as e:
         print("ImportException:", e)
 
+#from videorecorder import save_to_video
+_default_video_reader = None
+_default_video_reader_return_code = 0
+_last_frame = None
+
+def open_video(video_fname):
+    global _default_video_reader
+    _default_video_reader = cv2.VideoCapture(video_fname)
+    return _default_video_reader
+
+
+def read_frame(skip_frames=None):
+    global _default_video_reader, _default_video_reader_return_code, _last_frame
+
+    if skip_frames is not None:
+        for _ in range(skip_frames):
+            _default_video_reader.read()
+
+    _default_video_reader_return_code, _last_frame =  _default_video_reader.read()
+    return _last_frame
+
+
+def get_last_frame_obtained():
+    return _last_frame
 
 def random_RGB():
     return [random.randint(0, 255) for _ in range(3)]
@@ -32,6 +58,8 @@ def skip_frames(vr, delta_frames):
 def skip_frames_by_reading_one_by_one(vr, delta_frames):
     for i in range(delta_frames):
         vr.read()
+
+
 
 
 
@@ -144,6 +172,11 @@ def put_img2_to_img_at_xy(img, img2, x, y=None):
     img[y1:y2, x1:x2] = img2[yA : yA + delta_y, xA : xA + delta_x]
 
 
+def put_img2_taken_by_center_to_img_at_xy(img, img2, x, y=None):
+    delta_x = img.shape[1] // 2
+    delta_y = img.shape[0] // 2
+    put_img2_to_img_at_xy(img, img2, x=x - delta_x, y=y - delta_y)
+
 
 # With shadow
 def put_img2_to_img_at_xy_with_shadow(img, img2, x, y=None, shade_dx=50,
@@ -155,6 +188,7 @@ shade_dy=50, coeff=4):
     shade_img = frame[y + shade_dy: y + img2.shape[0]  + shade_dy, x + shade_dx: x + img2.shape[1] + shade_dx]
     shade_img -= (shade_img  // coeff)
     put_img2_to_img_at_xy(frame, img2, x=x, y=y)
+
 
 
 
@@ -183,6 +217,12 @@ def uint8_normalized_std(array):
 
 
 
+def uint8_normalized_mean(t):
+    t = np.round(255 * (t /2 /t.mean()))
+    
+    return t.astype("uint8")
+
+
 def uint8_normalized(t):
     t = np.round(255 * (t / t.max()))
     
@@ -198,6 +238,15 @@ global vr, frame_counter, frame, key, frame_width, frame_height
 global n_frames
 
 
+def get_one_first_n_frames_generator(video_filename, n=1):
+    cap = cv2.VideoCapture(video_filename)
+    for i in range(n):
+        ret, frame = cap.read()
+        yield frame
+    
+
+
+
 def run_video_loop(
     video_filename,
     inside_video_loop_func,
@@ -205,7 +254,8 @@ def run_video_loop(
     start_frame=0,
     framerate=60,
     full_screen=True,
-    autoresize=True
+    autoresize=True,
+    save_video=0
 ):
     global vr, frame_counter, frame, key, frame_width, frame_height
     global n_frames
@@ -262,6 +312,9 @@ def run_video_loop(
         else:
             img = frame_to_show
         cv2.imshow("Main", img)
+        if save_video:
+            save_to_video(img)
+
 
         delta_frames = 1000
         time.sleep(1 / framerate)
@@ -409,6 +462,16 @@ def waitKey(max_pause=10):
 
 
 def denormalize_coordinates(pt, width, height):
+    pt = np.array(pt, dtype="float")
+    original_shape = pt.shape
+    pt = pt.reshape(-1, 2)
+    pt[:, 0] *= width
+    pt[:, 1] *= height
+    return np.round(pt.reshape(original_shape)).astype("int")
+
+
+
+    """
     try:
         x, y = pt
         res = round(x * width), round(y * height)
@@ -416,6 +479,21 @@ def denormalize_coordinates(pt, width, height):
     except:
         res = [(round(x * width), round(y * height)) for (x, y) in pt]
         return res
+     """
+
+def normalize_coordinates(pt):
+    original_shape = pt.shape
+    pt = np.array(pt, dtype="float").reshape(-1, 2)
+    x0 = pt[:, 0].min()
+    y0 = pt[:, 1].min()
+
+    
+    pt[:, 0] -= x0
+    pt[:, 1] -= y0
+
+    pt[:, 0] /= pt[:, 0].max()
+    pt[:, 1] /= pt[:, 1].max()
+    return pt.reshape(original_shape)
 
 
 def round_tuple(*args):
@@ -428,6 +506,8 @@ def round_tuple(*args):
     return tuple([int(round(x)) for x in list(l)])
 
 
+
+
 def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
     if x2 is None and y2 is None:
         x1, y1 = pt_1
@@ -436,6 +516,13 @@ def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
         x1 = pt_1
         y1 = pt_2
 
+
+    if 0 < x1 < x2 < 1 and 0 < y1 < y2  < 1:
+        (x1, y1), (x2, y2) = denormalize_coordinates([(x1, y1), (x2, y2)],
+        width=img.shape[0],
+        height=img.shape[1])
+    
+    
     x1 = max(0, x1)
     y1 = max(0, y1)
 
@@ -475,12 +562,16 @@ def rectangle(img, *args, **kwargs):
     raise TypeError("What has it to do with a rectangle?")
 
 
+
+
+
 def read_frame_and_show(cap, title="Main"):
     cap.set(0, ind)
     ret, frame = cap.read()
     cv2.imshow(title, frame)
     key = cv2.waitKey(1)
     return frame, key
+
 
 
 def smart_file_finder(file_name, start_path=".", verbose=True):
@@ -490,18 +581,36 @@ def smart_file_finder(file_name, start_path=".", verbose=True):
     if os.path.exists(file_name):
         return file_name
 
-    file_name = (glob.glob(os.path.join(start_path, "**", file_name), recursive=True))[
-        :1
-    ]
+    fname_found = None
+    for current_file_name in glob.iglob(os.path.join(start_path, "**", file_name), recursive=True):
+    
+        fname_found = current_file_name
+        break
+    
 
-    if file_name:
+    if fname_found:
         if verbose:
-            print(f"That's what I found: {file_name}")
-        return file_name[0]
+            print(f"That's what I found: {fname_found}")
+        return fname_found
     else:
         if verbose:
-            print(f"Sorry, haven't found anything like this ({file_name})")
+            print(f"Sorry, haven't found anything like this ({fname_found})")
 
+"""
+def smart_file_finder(file_name, start_path="."):
+    if os.path.exists(file_name):
+        return file_name
+    file_name = glob.glob(
+        os.path.join(start_path, "**", "*" + file_name), recursive=True)[:1]
+    if file_name:
+        print()#f"That's what I found: {file_name}")
+        return file_name[0]
+    else:
+        print(f"Sorry, haven't found anything like this ({file_name})")
+
+
+
+  """
 
 def random_file(mask, *args, **kwargs):
     file_list = glob.glob(os.path.join(mask), *args, **kwargs)
@@ -546,8 +655,10 @@ def show_image_and_wait(img):
     return key
 
 
-def imshow(img):
-    cv2.imshow("Hello!", img)
+def imshow(img, title="Hello!"):
+    if type(img) is str:
+        img, title = title, img
+    cv2.imshow(title, img)
     key = cv2.waitKey(1)
     if key in (27, ord("q")):
         sys.exit()
@@ -605,13 +716,36 @@ def half_the_size(img, *args, **kwargs):
     return cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), *args, **kwargs)
 
 
-def downsize(img, r=10, interpolation=cv2.INTER_NEAREST, *args, **kwargs):
+def downsize(img, r=10, interpolation=cv2.INTER_AREA, *args, **kwargs):
     if r < 1:
         r = 1 / r
     return cv2.resize(img, (img.shape[1] // r, img.shape[0] // r), *args, **kwargs)
 
 
-def fit_img_center(img, width=None, height=None, **kwargs):
+def add_vertical_border(img, border_width):
+    v_border = np.zeros((img.shape[0], border_width, 3), dtype="uint8")
+    return np.concatenate([v_border.copy(), img, v_border.copy()], axis=1)
+
+
+def add_horizontal_border(img, border_height):
+    h_border = np.zeros((border_height, img.shape[1], 3), dtype="uint8")
+    return np.concatenate([h_border.copy(), img, h_border.copy()], axis=0)
+
+"""
+def background_border(img, border_height, border_width, background):
+    img = add_vertical_border(add_horizontal_border(img, border_height), 
+    border_width)
+    background = cv2.resize(background, (img.shape[1], img.shape[0]))
+
+    background[]
+    img[: border_height, :, :] = background[: border_height, :, :].copy()
+    img[img.shape[0] - border_height:, :, :] = background[img.shape[0] - border_height:, :, :].copy()
+    return img
+   """
+
+
+
+def fit_img_center(img, width=None, height=None, background=None, **kwargs):
     if width is None and height is None:
         width = round(1920 * 0.5)
         height = round(1080 * 0.5)
@@ -619,7 +753,14 @@ def fit_img_center(img, width=None, height=None, **kwargs):
     img_shape[0] = height
     img_shape[1] = width
 
-    new_img = np.zeros(img_shape, dtype=img.dtype)
+    
+    if background is None:
+        new_img = np.zeros(img_shape, dtype=img.dtype)
+    else:
+        
+        new_img = background[: img_shape[0], : img_shape[1]].copy()
+
+
     w2h = width / height
 
     img_height, img_width = img.shape[0], img.shape[1]
