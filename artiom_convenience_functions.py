@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 import pylab as pl
 from tqdm import tqdm
 import requests
+import tkinter
+from tkinter.filedialog import askopenfilename
+open_file_dialog = askopenfilename
 
 """
 for import_line in imports.split("\n"):
@@ -21,10 +24,40 @@ for import_line in imports.split("\n"):
     except ImportError as e:
         print("ImportException:", e)
 
-#from videorecorder import save_to_video
+# from videorecorder import save_to_video
 _default_video_reader = None
 _default_video_reader_return_code = 0
 _last_frame = None
+
+
+
+def use_artmonitor_as_imshow():
+    cv2.imshow = lambda title, img : send_to_artmonitor(img)
+    cv2.waitKey = lambda x: x
+
+
+def limit_GPU_mem_usage(GPU_MEM_GB=4):
+    import tensorflow as tf
+
+    gpus = tf.config.experimental.list_physical_devices("GPU")
+    if gpus:
+        try:
+            tf.config.experimental.set_virtual_device_configurati11on(
+                gpus[0],
+                [
+                    tf.config.experimental.VirtualDeviceConfiguration(
+                        memory_limit=GPU_MEM_GB * 1024
+                    )
+                ],
+            )
+        except RuntimeError as e:
+            print(e)
+
+
+"""def open_file_dialog(*args, **kwargs):
+    filename = askopenfilename(*args, **kwargs)
+    return filename
+"""
 
 def open_video(video_fname):
     global _default_video_reader
@@ -39,12 +72,47 @@ def read_frame(skip_frames=None):
         for _ in range(skip_frames):
             _default_video_reader.read()
 
-    _default_video_reader_return_code, _last_frame =  _default_video_reader.read()
+    _default_video_reader_return_code, _last_frame = _default_video_reader.read()
     return _last_frame
 
+
+def get_nvidia_temperature():
+    process = subprocess.Popen(
+        ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+        stdout=subprocess.PIPE,
+    )
+    out, err = process.communicate()
+    temperature = int(out.decode().replace("\n", ""))
+    return temperature
+
+
+
+def put_text(
+    img,
+    message,
+    coords=(20, 50),
+    font=cv2.FONT_HERSHEY_COMPLEX_SMALL,
+    size=1,
+    *args,
+    **kwargs,
+):
+    cv2.putText(img, message, coords, font, size, (0, 0, 0), 
+    round(3 + size // 2))
+    
+    
+    cv2.putText(
+        img,
+        message,
+        coords,
+        font,
+        size,
+        (255, 255, 255),
+        round(1 + size // 5),
+    )
 
 def get_last_frame_obtained():
     return _last_frame
+
 
 def random_RGB():
     return [random.randint(0, 255) for _ in range(3)]
@@ -58,9 +126,6 @@ def skip_frames(vr, delta_frames):
 def skip_frames_by_reading_one_by_one(vr, delta_frames):
     for i in range(delta_frames):
         vr.read()
-
-
-
 
 
 def image_with_saturation(img, alpha=0.8):
@@ -78,7 +143,11 @@ def image_with_saturation(img, alpha=0.8):
 def gradual_imshow(
     title, img, previous_img_l=[None], n_interframes=100, imshow=None, pause=1 / 50
 ):
-    if previous_img_l[0] is not None:
+    key = None
+    last_key_pressed = None
+    if previous_img_l[0] is not None or (
+        previous_img_l[0] is not None and img.shape != previous_img_l[0].shape
+    ):
         previous_img = previous_img_l[0]
         for t in np.linspace(0, 1, n_interframes):
             result_img = ((1 - t) * previous_img + t * img).astype("uint8")
@@ -87,11 +156,12 @@ def gradual_imshow(
             else:
                 cv2.imshow(title, result_img)
             key = cv2.waitKey(1)
+            if key > -1: last_key_pressed = key
             time.sleep(pause)
 
     cv2.imshow(title, img)
     previous_img_l[0] = img.copy()
-
+    return last_key_pressed
 
 def corrected_file_name(file_name):
     if not os.path.isfile(file_name):
@@ -145,12 +215,12 @@ def add_img2_to_img_at_xy(img, img2, x, y):
     img[y1:y2, x1:x2] = img[y1:y2, x1:x2] + img2[yA : yA + delta_y, xA : xA + delta_x]
 
 
-def draw_shade(img, x1, y1, x2, y2, shade_dx=50,  shade_dy=50):
-    shade_img = img[y1 + shade_dy: y2 + shade_dy, x1 + shade_dx: x2 + shade_dx] 
-    shade_img -= (shade_img  // 4)
+def draw_shade(img, x1, y1, x2, y2, shade_dx=50, shade_dy=50):
+    shade_img = img[y1 + shade_dy : y2 + shade_dy, x1 + shade_dx : x2 + shade_dx]
+    shade_img -= shade_img // 4
     put_img2_to_img_at_xy(img, shade_img, x=x1, y=y1)
 
-    
+
 def put_img2_to_img_at_xy(img, img2, x, y=None):
     if y is None:
         x, y = x
@@ -179,18 +249,19 @@ def put_img2_taken_by_center_to_img_at_xy(img, img2, x, y=None):
 
 
 # With shadow
-def put_img2_to_img_at_xy_with_shadow(img, img2, x, y=None, shade_dx=50,
-shade_dy=50, coeff=4):
+def put_img2_to_img_at_xy_with_shadow(
+    img, img2, x, y=None, shade_dx=50, shade_dy=50, coeff=4
+):
     frame = img
     if y is None:
         x, y = x
 
-    shade_img = frame[y + shade_dy: y + img2.shape[0]  + shade_dy, x + shade_dx: x + img2.shape[1] + shade_dx]
-    shade_img -= (shade_img  // coeff)
+    shade_img = frame[
+        y + shade_dy : y + img2.shape[0] + shade_dy,
+        x + shade_dx : x + img2.shape[1] + shade_dx,
+    ]
+    shade_img -= shade_img // coeff
     put_img2_to_img_at_xy(frame, img2, x=x, y=y)
-
-
-
 
 
 def it_is_jupyter_notebook():
@@ -208,24 +279,21 @@ def it_is_jupyter_notebook():
 
 
 def uint8_normalized_std(array):
-    array = np.round(255 * (array / 2 /array.max()))
+    array = np.round(255 * (array / 2 / array.max()))
     result = (array >= 0) * (array <= 255) * array
-
 
     return result.astype("uint8")
 
 
-
-
 def uint8_normalized_mean(t):
-    t = np.round(255 * (t /2 /t.mean()))
-    
+    t = np.round(255 * (t / 2 / t.mean()))
+
     return t.astype("uint8")
 
 
 def uint8_normalized(t):
     t = np.round(255 * (t / t.max()))
-    
+
     return t.astype("uint8")
 
 
@@ -243,8 +311,6 @@ def get_one_first_n_frames_generator(video_filename, n=1):
     for i in range(n):
         ret, frame = cap.read()
         yield frame
-    
-
 
 
 def run_video_loop(
@@ -255,7 +321,7 @@ def run_video_loop(
     framerate=60,
     full_screen=True,
     autoresize=True,
-    save_video=0
+    save_video=0,
 ):
     global vr, frame_counter, frame, key, frame_width, frame_height
     global n_frames
@@ -276,14 +342,14 @@ def run_video_loop(
             vr.set(1, start_frame)
         n_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
         if not n_frames > 1:
-            n_frames = 10**10
+            n_frames = 10 ** 10
 
         frame_height, frame_width = vr.get(4), vr.get(3)
     else:
         n_frames = 1000000
         frame_height, frame_width = None, None
     key = -1
-    frame_counter = -1  + start_frame
+    frame_counter = -1 + start_frame
     for frame_counter_i in tqdm(range(n_frames)):
         frame_counter += 1
         if video_filename is not None:
@@ -315,7 +381,6 @@ def run_video_loop(
         if save_video:
             save_to_video(img)
 
-
         delta_frames = 1000
         time.sleep(1 / framerate)
         key = cv2.waitKey(1)
@@ -343,15 +408,13 @@ def run_video_loop(
         vr.release()
 
 
-
 def columns(*args):
-    output  = [str(a).split('\n') for a in args]
+    output = [str(a).split("\n") for a in args]
     for x in zip(*output):
         for a in x:
             print(a, "    ", end="")
-        print("")    
+        print("")
 
-    
 
 def print_columns(*args):
     output = [str(a).split("\n") for a in args]
@@ -359,6 +422,7 @@ def print_columns(*args):
         for a in x:
             print(a, "    ", end="")
         print()
+
 
 def get_columns_str(*args):
     output = [str(a).split("\n") for a in args]
@@ -469,8 +533,6 @@ def denormalize_coordinates(pt, width, height):
     pt[:, 1] *= height
     return np.round(pt.reshape(original_shape)).astype("int")
 
-
-
     """
     try:
         x, y = pt
@@ -481,13 +543,13 @@ def denormalize_coordinates(pt, width, height):
         return res
      """
 
+
 def normalize_coordinates(pt):
     original_shape = pt.shape
     pt = np.array(pt, dtype="float").reshape(-1, 2)
     x0 = pt[:, 0].min()
     y0 = pt[:, 1].min()
 
-    
     pt[:, 0] -= x0
     pt[:, 1] -= y0
 
@@ -506,9 +568,7 @@ def round_tuple(*args):
     return tuple([int(round(x)) for x in list(l)])
 
 
-
-
-def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
+def rectangle_from_img(img, pt_1, pt_2, x2=None, y2=None):
     if x2 is None and y2 is None:
         x1, y1 = pt_1
         x2, y2 = pt_2
@@ -516,14 +576,13 @@ def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
         x1 = pt_1
         y1 = pt_2
 
+    # print(f"x1={x1}, y1={y1}, x2={x2}, y2={y2} ")
+    if 0 <= x1 <= x2 <= 1 and 0 <= y1 <= y2 <= 1:
+        (x1, y1), (x2, y2) = denormalize_coordinates(
+            [(x1, y1), (x2, y2)], width=img.shape[1], height=img.shape[0]
+        )
+        # print(f"После денормализации: x1={x1}, y1={y1}, x2={x2}, y2={y2} ")
 
-    #print(f"x1={x1}, y1={y1}, x2={x2}, y2={y2} ")
-    if 0 <= x1 <= x2 <= 1 and 0 <= y1 <= y2  <= 1:
-        (x1, y1), (x2, y2) = denormalize_coordinates([(x1, y1), (x2, y2)],
-        width=img.shape[1],
-        height=img.shape[0])
-        #print(f"После денормализации: x1={x1}, y1={y1}, x2={x2}, y2={y2} ")    
-    
     x1 = max(0, x1)
     y1 = max(0, y1)
 
@@ -533,7 +592,7 @@ def rectagle_from_img(img, pt_1, pt_2, x2=None, y2=None):
     return img[y1:y2, x1:x2]
 
 
-get_rectangle_from_img = rectagle_from_img
+get_rectangle_from_img = rectangle_from_img
 
 
 def crop_nonzero(img):
@@ -563,16 +622,12 @@ def rectangle(img, *args, **kwargs):
     raise TypeError("What has it to do with a rectangle?")
 
 
-
-
-
 def read_frame_and_show(cap, title="Main"):
     cap.set(0, ind)
     ret, frame = cap.read()
     cv2.imshow(title, frame)
     key = cv2.waitKey(1)
     return frame, key
-
 
 
 def smart_file_finder(file_name, start_path=".", verbose=True):
@@ -583,11 +638,12 @@ def smart_file_finder(file_name, start_path=".", verbose=True):
         return file_name
 
     fname_found = None
-    for current_file_name in glob.iglob(os.path.join(start_path, "**", file_name), recursive=True):
-    
+    for current_file_name in glob.iglob(
+        os.path.join(start_path, "**", file_name), recursive=True
+    ):
+
         fname_found = current_file_name
         break
-    
 
     if fname_found:
         if verbose:
@@ -596,6 +652,7 @@ def smart_file_finder(file_name, start_path=".", verbose=True):
     else:
         if verbose:
             print(f"Sorry, haven't found anything like this ({fname_found})")
+
 
 """
 def smart_file_finder(file_name, start_path="."):
@@ -612,6 +669,7 @@ def smart_file_finder(file_name, start_path="."):
 
 
   """
+
 
 def random_file(mask, *args, **kwargs):
     file_list = glob.glob(os.path.join(mask), *args, **kwargs)
@@ -732,6 +790,7 @@ def add_horizontal_border(img, border_height):
     h_border = np.zeros((border_height, img.shape[1], 3), dtype="uint8")
     return np.concatenate([h_border.copy(), img, h_border.copy()], axis=0)
 
+
 """
 def background_border(img, border_height, border_width, background):
     img = add_vertical_border(add_horizontal_border(img, border_height), 
@@ -743,6 +802,8 @@ def background_border(img, border_height, border_width, background):
     img[img.shape[0] - border_height:, :, :] = background[img.shape[0] - border_height:, :, :].copy()
     return img
    """
+
+
 
 
 
@@ -782,14 +843,15 @@ def fit_img_center(img, width=None, height=None, background=None, **kwargs):
         x_start = width // 2 - new_img_width // 2
         new_img[:, x_start : x_start + new_img_width] = scaled_img
         return new_img
-
+    
+    
 
 def send_to_artmonitor(
     img,
     secret="импредикабельность",
-    jpg_quality=None,
+    jpg_quality=90,
     jpeg_quality=None,
-    monitor_url="https://artmonitor.pythonanywhere.com",
+    monitor_url="http://127.0.0.1:7893",  # https://artmonitor.pythonanywhere.com",
 ):
     jpg_quality = 20 or (jpeg_quality or jpg_quality)
     url = f"{monitor_url}/{secret}/postimage/"
